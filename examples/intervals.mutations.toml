@@ -1,0 +1,41 @@
+# A worked example: the closed comparison in `overlaps` is an argument the
+# tests rest on. Each entry breaks it in one way and names the tests that
+# must notice. Run from the repository root:
+#
+#   ostiarius mutate examples/intervals.mutations.toml
+
+version = 1
+root = "intervals"
+command = ["cargo", "test", "--lib"]
+min_passed = 5
+
+[[mutation]]
+id = "open-interval"
+what = "the closed comparison made open"
+file = "src/interval.rs"
+find = "a.lo <= b.hi && b.lo <= a.hi"
+replace = "a.lo < b.hi && b.lo < a.hi"
+must_fail = ["interval::tests::touching_intervals_overlap"]
+
+[[mutation]]
+id = "one-sided"
+what = "one of the two bound checks dropped"
+file = "src/interval.rs"
+find = "a.lo <= b.hi && b.lo <= a.hi"
+replace = "a.lo <= b.hi"
+must_fail = [
+    "interval::tests::adjacent_intervals_do_not",
+    "interval::tests::disjoint_intervals_do_not",
+    "interval::tests::overlap_is_symmetric",
+]
+
+[[mutation]]
+id = "off-by-one"
+what = "the upper bound widened by one"
+file = "src/interval.rs"
+find = "b.lo <= a.hi"
+replace = "b.lo <= a.hi + 1"
+must_fail = [
+    "interval::tests::adjacent_intervals_do_not",
+    "interval::tests::overlap_is_symmetric",
+]

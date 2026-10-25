@@ -1,0 +1,39 @@
+[package]
+name = "ostiarius"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+description = "Checks that a cargo test gate proves what it claims, by asserting test counts and by running declared mutations that must fail named tests"
+authors = ["Justin Erlick"]
+repository = "https://github.com/JustinGeoSci/ostiarius"
+documentation = "https://github.com/JustinGeoSci/ostiarius/blob/main/docs/table-format.md"
+readme = "README.md"
+keywords = ["testing", "mutation-testing", "cargo", "ci", "test-count"]
+categories = ["development-tools::testing", "command-line-utilities"]
+include = [
+    "src/**",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+    "CHANGELOG.md",
+    "NOTICE",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "docs/**",
+]
+
+[dependencies]
+toml = { version = "=1.1.8", default-features = false, features = [
+    "std",
+    "parse",
+    "serde",
+] }
+ctrlc = "=3.5.2"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"

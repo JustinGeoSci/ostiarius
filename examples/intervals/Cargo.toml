@@ -1,0 +1,8 @@
+[package]
+name = "intervals"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Its own workspace, so it builds on its own wherever it is copied.
+[workspace]
