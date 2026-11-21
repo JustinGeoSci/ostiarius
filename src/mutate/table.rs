@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use toml::Value;
 
-use crate::count::REFUSED_FLAGS;
+use crate::count::refused_flag;
 use crate::decode::decode;
 use crate::reader::libtest::normalize_name;
 use crate::split::split;
@@ -488,8 +488,10 @@ fn load_entry(map: &toml::Table, d: &Defaults, ctx: &mut Ctx<'_>) -> Option<Entr
             ctx.err("no command: set `command` at the top of the table or in this entry");
         }
         Some(args) => {
-            if let Some(flag) = args.iter().find(|a| REFUSED_FLAGS.contains(&a.as_str())) {
-                ctx.err(format!("the command uses {flag}, which prints tests' output among the result lines ostiarius reads"));
+            if let Some((flag, effect)) = refused_flag(args) {
+                ctx.err(format!(
+                    "the command uses {flag}, which {effect} ostiarius reads"
+                ));
             }
         }
         None => {}
@@ -832,7 +834,15 @@ must_fail = ["tests::a"]
     fn nocapture_refused() {
         has(
             &format!("version = 1\ncommand = \"cargo test -- --nocapture\"\n{ENTRY}"),
-            "the command uses --nocapture",
+            "the command uses --nocapture, which prints tests' output among the result lines ostiarius reads",
+        );
+    }
+
+    #[test]
+    fn quiet_refused() {
+        has(
+            &format!("version = 1\ncommand = [\"cargo\", \"test\", \"-q\"]\n{ENTRY}"),
+            "the command uses -q, which hides the test names and binary headers ostiarius reads",
         );
     }
 

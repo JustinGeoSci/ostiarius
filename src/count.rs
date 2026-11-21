@@ -55,7 +55,8 @@ Running the command here (`-- COMMAND`) avoids saving a log at all.
 
 A test's captured output is ignored, so a test that prints a line shaped like
 a result changes nothing. For the same reason a command run here may not use
---nocapture or --show-output.
+--nocapture or --show-output. It may not use -q or --quiet either, which leave
+out the test names and the `Running` headers this command reads.
 
 Examples:
   ostiarius count --min-passed 120 target/test.log
@@ -79,7 +80,27 @@ const OPTS: &[Opt] = &[
 
 /// Flags that make libtest print tests' output inline, where it mixes with the
 /// result lines this command reads.
-pub(crate) const REFUSED_FLAGS: [&str; 2] = ["--nocapture", "--show-output"];
+const OUTPUT_FLAGS: [&str; 2] = ["--nocapture", "--show-output"];
+
+/// Flags that make Cargo leave out its `Running` headers and libtest leave out
+/// its `test <name> ... <outcome>` lines. Without them no binary can be
+/// labeled and no failing test can be named, so a mutation that works would be
+/// reported as missing its failures.
+const QUIET_FLAGS: [&str; 2] = ["-q", "--quiet"];
+
+/// The first argument in `args` that would corrupt the output this tool reads,
+/// with what it does, as the end of a sentence beginning "which".
+pub(crate) fn refused_flag(args: &[String]) -> Option<(&str, &'static str)> {
+    args.iter().find_map(|a| {
+        if OUTPUT_FLAGS.contains(&a.as_str()) {
+            Some((a.as_str(), "prints tests' output among the result lines"))
+        } else if QUIET_FLAGS.contains(&a.as_str()) {
+            Some((a.as_str(), "hides the test names and binary headers"))
+        } else {
+            None
+        }
+    })
+}
 
 // ===========================================================================
 // Options
@@ -170,9 +191,9 @@ fn options(args: &[String]) -> Result<Option<Options>, UsageError> {
         }
     };
     if let Input::Command(cmd) = &input {
-        if let Some(flag) = cmd.iter().find(|a| REFUSED_FLAGS.contains(&a.as_str())) {
+        if let Some((flag, effect)) = refused_flag(cmd) {
             return Err(UsageError(format!(
-                "the command uses {flag}, which prints tests' output among the result lines this command reads"
+                "the command uses {flag}, which {effect} this command reads"
             )));
         }
     } else if list_mode {
@@ -697,6 +718,23 @@ mod tests {
             .map(|_| ())
             .expect_err("refused");
         assert!(err.0.contains("--nocapture"), "{err}");
+        assert!(err.0.contains("prints tests' output"), "{err}");
+    }
+
+    #[test]
+    fn quiet_refused() {
+        for cmd in [
+            &["--", "cargo", "test", "-q"][..],
+            &["--", "cargo", "test", "--quiet"],
+            &["--", "cargo", "test", "--", "--quiet"],
+        ] {
+            let err = options(&args(cmd)).map(|_| ()).expect_err("refused");
+            assert!(
+                err.0
+                    .ends_with("which hides the test names and binary headers this command reads"),
+                "{err}"
+            );
+        }
     }
 
     #[test]

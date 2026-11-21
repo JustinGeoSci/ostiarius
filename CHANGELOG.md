@@ -4,6 +4,37 @@ All notable changes to this crate are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the crate follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-11-20
+
+### Changed
+
+- A command that uses `-q` or `--quiet` is now refused, by `count` and in
+  mutation tables, as `--nocapture` and `--show-output` already were. Quiet
+  output leaves out Cargo's `Running` headers and libtest's per-test lines,
+  so in 0.1.0 no binary could be labeled and no failing test named, and a
+  mutation that worked was reported as a failure. `count` exits with code 3,
+  and a table that uses either flag is refused at load before any file is
+  touched.
+
+### Fixed
+
+- Doctests of an edition 2024 crate are read correctly. Since Rust 1.86,
+  rustdoc merges these doctests into one binary and runs the ones it cannot
+  merge, such as `compile_fail` tests, as further groups, each with its own
+  result line under the one `Doc-tests` header. Version 0.1.0 counted more
+  result lines than headers and reported the log as untrustworthy, so a run
+  that passed exited with code 2. The groups are now added into one doctest
+  binary.
+- Doctest names that carry a mode after the line number, `- compile fail`,
+  `- should panic` or `- compile`, are now normalized to the name a listing
+  gives. In 0.1.0 such a test could not be matched by `--expect-names` or
+  named in `must_fail`.
+
+A doctest group is accepted only if its result line follows a `running N
+tests` line of its own whose N equals the counts in that result. A stray
+result line is still reported, inside the doctest section or after any other
+binary.
+
 ## [0.1.0] - 2026-10-25
 
 The first release has two subcommands.
@@ -14,4 +45,5 @@ The first release has two subcommands.
 
 The table format is versioned. Any change to the meaning of an existing key, or any new required key, will raise the version.
 
+[0.1.1]: https://github.com/JustinGeoSci/ostiarius/releases/tag/v0.1.1
 [0.1.0]: https://github.com/JustinGeoSci/ostiarius/releases/tag/v0.1.0

@@ -113,7 +113,7 @@ A command written as a string is split by POSIX quoting rules without any expans
 
 ## 6. Test names
 
-Tests are named by their full path as `cargo test` prints them, for example `interval::tests::touching_intervals_overlap`. A doctest prints with a line number, as in `src/lib.rs - overlaps (line 12)`, but the line number moves with every edit above it. Doctests are therefore named without the `(line N)` suffix and with forward slashes, so `src\lib.rs - overlaps (line 12)` on Windows and `src/lib.rs - overlaps (line 12)` elsewhere are both written `src/lib.rs - overlaps`. Names in tables are normalized the same way, so a table may also use the printed form. A test's captured output is never read as results, so a failing test that prints a line shaped like `test other ... FAILED` changes nothing.
+Tests are named by their full path as `cargo test` prints them, for example `interval::tests::touching_intervals_overlap`. A doctest prints with a line number, as in `src/lib.rs - overlaps (line 12)`, but the line number moves with every edit above it. Doctests are therefore named without the `(line N)` suffix and with forward slashes, so `src\lib.rs - overlaps (line 12)` on Windows and `src/lib.rs - overlaps (line 12)` elsewhere are both written `src/lib.rs - overlaps`. Some doctests also print a mode after the line number, `- compile fail`, `- should panic`, or `- compile` for a `no_run` test, as in `src/lib.rs - overlaps (line 14) - compile fail`, while a listing prints the same test without it. The mode is removed with the line number, so that test is also written `src/lib.rs - overlaps`, and every doctest on one item shares one name. Names in tables are normalized the same way, so a table may also use the printed form. A test's captured output is never read as results, so a failing test that prints a line shaped like `test other ... FAILED` changes nothing.
 
 ## 7. What an entry expects
 
@@ -190,6 +190,7 @@ Each message appears below as the tool prints it, with placeholders in angle bra
 | `` `command` cannot be split: <reason> `` | A command string has an unclosed quote or ends with a lone backslash. Close the quote, or give the command as a list. |
 | `` `command` is empty `` | The command has no arguments. |
 | `the command uses <flag>, which prints tests' output among the result lines ostiarius reads` | `--nocapture` or `--show-output` would mix test output with results. Remove the flag. |
+| `the command uses <flag>, which hides the test names and binary headers ostiarius reads` | `-q` or `--quiet` leaves out the `Running` headers and the per-test lines, so no failing test could be named and every entry would fail. Remove the flag. |
 | `` `expect` must be "tests-fail" or "compile-error", not <value> `` | An unknown expectation. |
 | `` `file` must be relative to the root `` | `file` is an absolute path. |
 | `` `file` may not leave its root (no `..`) `` | `file` contains `..`. |

@@ -22,6 +22,27 @@
 //! `Running` and `Doc-tests` headers on stderr while libtest prints its results
 //! on stdout, and only a log that interleaves the two faithfully lets each
 //! result be attributed to the binary that produced it.
+//!
+//! Every result line normally has a header of its own, so a log with more
+//! result lines than headers holds a line that the harness did not print. The
+//! one exception is doctests. Since Rust 1.86, rustdoc merges the doctests of
+//! an edition 2024 crate into one binary and runs the doctests it cannot merge,
+//! such as `compile_fail` or an `edition2021` test, as further groups. Each
+//! group prints its own `running N tests` line and result line, all under the
+//! one `Doc-tests` header.
+//!
+//! ```text
+//!    Doc-tests demo
+//! running 2 tests
+//! test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+//! running 1 test
+//! test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+//! ```
+//!
+//! A later group is added into the doctest binary only if its result line
+//! follows a `running N tests` line of its own whose N equals the counts in
+//! that result. A lone result line inside the doctest section, or any extra
+//! result line after another kind of binary, still makes the log suspect.
 
 use super::{Binary, Outcome, Reader, Run};
 
@@ -37,6 +58,10 @@ impl Reader for Libtest {
         let mut captured = false;
         let mut headers = 0_usize;
         let mut pending: Option<String> = None;
+        // Whether the current section is a `Doc-tests` one, and the count from
+        // the last `running N tests` line since the previous result.
+        let mut in_doctests = false;
+        let mut running: Option<u64> = None;
         let mut tests: Vec<(String, Outcome)> = Vec::new();
         for raw in text.lines() {
             let line = raw.trim_end();
@@ -54,20 +79,36 @@ impl Reader for Libtest {
             if let Some(rest) = trimmed.strip_prefix("Running ") {
                 headers += 1;
                 pending = Some(label_from_running(rest));
+                in_doctests = false;
             } else if let Some(krate) = trimmed.strip_prefix("Doc-tests ") {
                 headers += 1;
                 pending = Some(format!("doctests ({})", krate.trim()));
-            } else if let Some((passed, failed, ignored)) = result_counts(line) {
-                let label = pending
-                    .take()
-                    .unwrap_or_else(|| format!("(unlabeled {})", run.binaries.len() + 1));
-                run.binaries.push(Binary {
-                    label,
-                    passed,
-                    failed,
-                    ignored,
-                    tests: std::mem::take(&mut tests),
-                });
+                in_doctests = true;
+            } else if let Some(n) = running_count(line) {
+                running = Some(n);
+            } else if let Some(counts) = result_counts(line) {
+                let ran = running.take();
+                let group = pending.is_none() && in_doctests && ran == Some(counts.total());
+                match run.binaries.last_mut() {
+                    Some(last) if group => {
+                        last.passed += counts.passed;
+                        last.failed += counts.failed;
+                        last.ignored += counts.ignored;
+                        last.tests.append(&mut tests);
+                    }
+                    _ => {
+                        let label = pending
+                            .take()
+                            .unwrap_or_else(|| format!("(unlabeled {})", run.binaries.len() + 1));
+                        run.binaries.push(Binary {
+                            label,
+                            passed: counts.passed,
+                            failed: counts.failed,
+                            ignored: counts.ignored,
+                            tests: std::mem::take(&mut tests),
+                        });
+                    }
+                }
             } else if let Some(test) = test_line(line) {
                 tests.push(test);
             }
@@ -100,7 +141,10 @@ impl Reader for Libtest {
 /// A test's name as users write it. A doctest prints as
 /// `src/lib.rs - Item (line 32)`, but its line number moves with every edit
 /// above it and its path has backslashes on Windows, so both are normalized
-/// away to give `src/lib.rs - Item`.
+/// away to give `src/lib.rs - Item`. Some doctests also print a mode after the
+/// line number, as in `src/lib.rs - Item (line 32) - compile fail`, while a
+/// listing prints the same test without it, so the mode is removed with the
+/// line number.
 pub(crate) fn normalize_name(name: &str) -> String {
     let name = name.trim();
     let name = strip_line_suffix(name);
@@ -110,15 +154,23 @@ pub(crate) fn normalize_name(name: &str) -> String {
     }
 }
 
+/// The modes rustdoc prints after a doctest's line number.
+const DOCTEST_MODES: [&str; 3] = [" - compile fail", " - should panic", " - compile"];
+
 fn strip_line_suffix(name: &str) -> &str {
     let Some(open) = name.rfind(" (line ") else {
         return name;
     };
-    match name[open + " (line ".len()..].strip_suffix(')') {
-        Some(digits) if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) => {
-            &name[..open]
-        }
-        _ => name,
+    let rest = &name[open + " (line ".len()..];
+    let Some(close) = rest.find(')') else {
+        return name;
+    };
+    let (digits, after) = (&rest[..close], &rest[close + 1..]);
+    let numbered = !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
+    if numbered && (after.is_empty() || DOCTEST_MODES.contains(&after)) {
+        &name[..open]
+    } else {
+        name
     }
 }
 
@@ -162,8 +214,26 @@ fn is_capture_start(line: &str) -> bool {
     line.starts_with("---- ") && (line.ends_with(" stdout ----") || line.ends_with(" stderr ----"))
 }
 
-/// Reads `test result: ok. 4 passed; 0 failed; 1 ignored; ...` as `(4, 0, 1)`.
-fn result_counts(line: &str) -> Option<(u64, u64, u64)> {
+/// The counts on one result line.
+#[derive(Clone, Copy)]
+struct Counts {
+    passed: u64,
+    failed: u64,
+    ignored: u64,
+    measured: u64,
+}
+
+impl Counts {
+    /// How many tests ran, which is the N of the `running N tests` line that
+    /// precedes a genuine result. Filtered-out tests are not part of it.
+    fn total(self) -> u64 {
+        self.passed + self.failed + self.ignored + self.measured
+    }
+}
+
+/// Reads `test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; ...`.
+/// The `measured` count is taken as 0 when the line stops before it.
+fn result_counts(line: &str) -> Option<Counts> {
     let rest = line.strip_prefix("test result: ")?;
     let rest = rest
         .strip_prefix("ok. ")
@@ -172,7 +242,25 @@ fn result_counts(line: &str) -> Option<(u64, u64, u64)> {
     let passed = count_of(parts.next()?, "passed")?;
     let failed = count_of(parts.next()?, "failed")?;
     let ignored = count_of(parts.next()?, "ignored")?;
-    Some((passed, failed, ignored))
+    let measured = parts
+        .next()
+        .and_then(|p| count_of(p, "measured"))
+        .unwrap_or(0);
+    Some(Counts {
+        passed,
+        failed,
+        ignored,
+        measured,
+    })
+}
+
+/// Reads `running 4 tests` or `running 1 test` as 4 or 1.
+fn running_count(line: &str) -> Option<u64> {
+    let rest = line.strip_prefix("running ")?;
+    let digits = rest
+        .strip_suffix(" tests")
+        .or_else(|| rest.strip_suffix(" test"))?;
+    digits.parse().ok()
 }
 
 fn count_of(part: &str, word: &str) -> Option<u64> {
@@ -364,6 +452,80 @@ mod tests {
     fn list_doctest_names_normalized() {
         let text = "   Doc-tests demo\nsrc\\lib.rs - add (line 3): test\n";
         assert_eq!(Libtest.parse_list(text), ["src/lib.rs - add"]);
+    }
+
+    fn fixture(name: &str) -> String {
+        let path = format!("{}/tests/fixtures/logs/{name}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(path).expect("fixture")
+    }
+
+    #[test]
+    fn merged_doctest_groups_form_one_binary() {
+        let run = parse(&fixture("doctest_merged_2024.log"));
+        assert!(run.suspect.is_none(), "{:?}", run.suspect);
+        assert_eq!(run.binaries.len(), 2);
+        let doc = &run.binaries[1];
+        assert_eq!(doc.label, "doctests (demo)");
+        assert_eq!((doc.passed, doc.failed, doc.ignored), (5, 0, 1));
+        assert_eq!(doc.tests.len(), 6);
+    }
+
+    #[test]
+    fn merged_doctest_failure_is_counted() {
+        let run = parse(&fixture("doctest_merged_fail.log"));
+        assert!(run.suspect.is_none(), "{:?}", run.suspect);
+        assert_eq!((run.passed(), run.failed(), run.ignored()), (4, 1, 1));
+        assert_eq!(run.failing(), ["src/lib.rs - one"]);
+    }
+
+    #[test]
+    fn lone_result_in_doctest_section_is_suspect() {
+        let text = fixture("doctest_merged_2024.log").replace(
+            "all doctests ran",
+            "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\nall doctests ran",
+        );
+        assert!(parse(&text).suspect.is_some());
+    }
+
+    #[test]
+    fn doctest_group_with_wrong_count_is_suspect() {
+        // The second group ran one test, so a result claiming seven cannot be
+        // the harness's own line.
+        let text = fixture("doctest_merged_2024.log").replace(
+            "two (line 25) ... ok\n\ntest result: ok. 1 passed",
+            "two (line 25) ... ok\n\ntest result: ok. 7 passed",
+        );
+        assert!(text.contains("ok. 7 passed"));
+        assert!(parse(&text).suspect.is_some());
+    }
+
+    #[test]
+    fn extra_group_after_unit_tests_is_suspect() {
+        let text = format!(
+            "     Running unittests src/lib.rs (target/debug/deps/demo-0123456789abcdef)\n\nrunning 2 tests\n{RESULT_OK}\n\nrunning 2 tests\n{RESULT_OK}\n"
+        );
+        assert!(parse(&text).suspect.is_some());
+    }
+
+    #[test]
+    fn doctest_modes_are_normalized() {
+        assert_eq!(
+            normalize_name("src/lib.rs - one (line 5) - compile fail"),
+            "src/lib.rs - one"
+        );
+        assert_eq!(
+            normalize_name("src\\lib.rs - one (line 9) - should panic"),
+            "src/lib.rs - one"
+        );
+        assert_eq!(
+            normalize_name("src/lib.rs - two (line 17) - compile"),
+            "src/lib.rs - two"
+        );
+        // Text after the line number that is not a rustdoc mode stays.
+        assert_eq!(
+            normalize_name("src/lib.rs - one (line 5) - other"),
+            "src/lib.rs - one (line 5) - other"
+        );
     }
 
     #[test]

@@ -12,11 +12,7 @@ A test gate makes two kinds of claim that its exit code cannot support on its ow
 cargo install --locked ostiarius
 ```
 
-`--locked` builds with the exact dependency versions the release was tested with, recorded in its `Cargo.lock`, rather than the newest compatible ones. 
-
-## Minimum supported Rust version
-
-Rust 1.87.0, edition 2024.
+`--locked` builds with the exact dependency versions the release was tested with, recorded in its `Cargo.lock`, rather than the newest compatible ones. The crate needs Rust 1.87 or later.
 
 ## Counting tests
 
@@ -42,7 +38,7 @@ $ ostiarius count --expect-names names.txt --list-mode -- cargo test -p mycrate
 FAILED: tests not found: parity::renamed_case
 ```
 
-A failing test can print anything, including a line that looks like a result, so a test's captured output is never read as results. For the same reason `count` refuses to run a command with `--nocapture` or `--show-output`. `--json` prints the result as one JSON object for CI.
+A failing test can print anything, including a line that looks like a result, so a test's captured output is never read as results. For the same reason `count` refuses to run a command with `--nocapture` or `--show-output`. It also refuses `-q` and `--quiet`, which leave out the test names and the `Running` headers it reads. `--json` prints the result as one JSON object for CI.
 
 ## Testing an argument with a mutation table
 
@@ -111,7 +107,7 @@ This is the table doing its job rather than getting in the way. The entry record
 
 ## Limits
 
-`ostiarius` reads libtest's human-readable output only, so nextest and other runners are not supported yet. Each mutation edits one file. Tests are matched by their full path, so two integration-test binaries containing a test with the same path cannot be told apart in `must_fail`.
+`ostiarius` reads libtest's human-readable output only, so nextest and other runners are not supported yet. Each mutation edits one file. Tests are matched by their full path, so two integration-test binaries containing a test with the same path cannot be told apart in `must_fail`. For the same reason, every doctest on one item shares one name once its line number is removed.
 
 ## License
 
@@ -123,4 +119,3 @@ Licensed under either of
 at your option. See also [NOTICE](NOTICE).
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
-
